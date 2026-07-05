@@ -1,0 +1,65 @@
+
+<#
+.SYNOPSIS
+    ASUS 电池管理：充电达到 80% 时同时关机 + 停止充电
+.DESCRIPTION
+    1. 通过 ASUS WMI 设置充电模式为"平衡模式"（80% 停止充电）
+    2. 循环检测电池电量，达到 95% 时执行关机
+    必须以管理员身份运行
+.EXAMPLE
+    .\battery-manager.ps1
+#>
+
+# ============ 第一部分：设置 ASUS 充电模式为平衡模式（80% 停止充电）============
+Write-Output "===== ASUS 电池管理工具 ====="
+Write-Output ""
+
+# 获取 ASUS WMI 实例
+$instance = Get-CimInstance -Namespace root/wmi -ClassName AsusAtkWmi_WMNB -ErrorAction SilentlyContinue | Select-Object -First 1
+
+if ($instance) {
+    # 查询当前充电模式
+    $status = Invoke-CimMethod -InputObject $instance -MethodName DSTS -Arguments @{Device_ID=0x00120056}
+    $currentMode = $status.device_status
+    $modeNames = @{0="满充模式(100%)"; 1="平衡模式(80%)"; 2="最长寿命模式(60%)"}
+    Write-Output "当前充电模式: $($modeNames[$currentMode]) [$currentMode]"
+
+    # 设置为平衡模式（98%）
+    if ($currentMode -ne 1) {
+        $result = Invoke-CimMethod -InputObject $instance -MethodName DEVS -Arguments @{Device_ID=0x00120056; Control_status=1}
+        if ($result.result -eq 1) {
+            Write-Output "✅ 已设置充电模式为: 平衡模式(80%)"
+        } else {
+            Write-Output "⚠️ 设置充电模式返回值: $($result.result)，可能未成功"
+        }
+    } else {
+        Write-Output "✅ 充电模式已经是平衡模式(80%)，无需修改"
+    }
+} else {
+    Write-Output "⚠️ 未找到 ASUS WMI 接口，跳过充电模式设置"
+    Write-Output "   你可以手动安装 MyASUS 来设置充电限制"
+}
+
+Write-Output ""
+
+# ============ 第二部分：监控电量，达到 80% 时关机 ============
+$threshold = 80
+Write-Output "===== 开始监控电池电量 ====="
+Write-Output "目标: 电量达到 $threshold% 时自动关机"
+Write-Output "按 Ctrl+C 可随时取消"
+Write-Output ""
+
+while ($true) {
+    $charge = (Get-WmiObject Win32_Battery).EstimatedChargeRemaining
+    $time = Get-Date -Format "HH:mm:ss"
+    Write-Output "[$time] 电池电量: $charge%"
+
+    if ($charge -ge $threshold) {
+        Write-Output ""
+        Write-Output "⚡ 电量已达到 $charge%（>= $threshold%），正在关机..."
+        Stop-Computer
+        break
+    }
+
+    Start-Sleep -Seconds 10
+}
